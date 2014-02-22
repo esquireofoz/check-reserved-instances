@@ -1,0 +1,73 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import datetime
+import time
+import optparse
+
+from boto import ec2
+
+
+parser = optparse.OptionParser(description="Shows summary about 'Reserved' and 'On-demand' ec2 instances")
+parser.add_option("--aws-access-key", type=str, default=None, help="AWS Access Key ID. Defaults to the value of the AWS_ACCESS_KEY_ID environment variable (if set)")
+parser.add_option("--aws-secret-key", type=str, default=None, help="AWS Secret Access Key. Defaults to the value of the AWS_SECRET_ACCESS_KEY environment variable (if set)")
+parser.add_option("--region", type=str, default="us-west-1", help="AWS Region name. Default is 'us-west-1'")
+parser.add_option("-w", "--warn-time", type=int, default=30, help="Expire period for reserved instances in days. Default is '30 days'")
+args, _ = parser.parse_args()
+
+conn = ec2.connect_to_region(args.region, aws_access_key_id=args.aws_access_key, aws_secret_access_key=args.aws_secret_key)
+
+instances = sum([x.instances for x in conn.get_all_instances()], [])
+
+running_instances = {}
+for i in instances:
+    if i.state == 'running':
+        running_instances[(i.instance_type, i.placement)] = running_instances.get((i.instance_type, i.placement), 0 ) + 1
+
+reserved_instances = {}
+soon_expire_ri = {}
+for ri in conn.get_all_reserved_instances():
+    if ri.state != 'active':
+        continue
+    reserved_instances[(ri.instance_type, ri.availability_zone)] = reserved_instances.get((ri.instance_type, ri.availability_zone), 0) + ri.instance_count
+    expire_time = time.mktime(datetime.datetime.strptime(ri.start, "%Y-%m-%dT%H:%M:%S.%fZ").timetuple()) + ri.duration
+    if (expire_time - time.time()) < args.warn_time * 86400:
+        soon_expire_ri[ri.id] = (ri.instance_type, ri.availability_zone, expire_time)
+
+diff = dict([(x, reserved_instances[x] - running_instances.get(x, 0)) for x in reserved_instances])
+
+for pkey in running_instances:
+    if pkey not in reserved_instances:
+        diff[pkey] = -running_instances[pkey]
+
+unused_ri = dict((k, v) for k, v in diff.iteritems() if v > 0)
+
+unreserved_instances = dict((k,-v) for k, v in diff.iteritems() if v < 0)
+
+# Report
+print("Unused reserved instances:")
+for k, v in unused_ri.iteritems():
+    print("\t(%s)\t%s\t%s" %(v, k[0], k[1]))
+if not unused_ri:
+    print("\tNone")
+print("")
+
+print("Expiring soon (less than %sd) reserved instances:" % args.warn_time)
+for k, v in soon_expire_ri.iteritems():
+    print("\t%s\t%s\t%s\t%s" %(k, v[0], v[1], datetime.datetime.fromtimestamp(v[2]).strftime('%Y-%m-%d')))
+if not soon_expire_ri:
+    print("\tNone")
+print("")
+
+print("On-demand instances, which haven't got a reserved instance:")
+for k, v in unreserved_instances.iteritems():
+    print("\t(%s)\t%s\t%s" %(v, k[0], k[1]))
+if not unreserved_instances:
+    print("\tNone")
+print("")
+
+print("Running on-demand instances:   %s" % sum(running_instances.values()))
+print("Reserved instances:            %s" % sum(reserved_instances.values()))
+print("")
+
+
