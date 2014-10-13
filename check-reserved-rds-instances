@@ -1,0 +1,86 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import datetime
+import time
+import optparse
+import os
+import sh
+
+from boto import rds
+
+
+parser = optparse.OptionParser(description="Shows summary about 'Reserved' and 'On-demand' rds instances")
+parser.add_option("--aws-access-key", type=str, default=None, help="AWS Access Key ID. Defaults to the value of the AWS_ACCESS_KEY_ID environment variable (if set)")
+parser.add_option("--aws-secret-key", type=str, default=None, help="AWS Secret Access Key. Defaults to the value of the AWS_SECRET_ACCESS_KEY environment variable (if set)")
+parser.add_option("--region", type=str, default="us-west-1", help="AWS Region name. Default is 'us-west-1'")
+parser.add_option("-w", "--warn-time", type=int, default=30, help="Expire period for reserved instances in days. Default is '30 days'")
+args, _ = parser.parse_args()
+
+conn = rds.connect_to_region(args.region, aws_access_key_id=args.aws_access_key, aws_secret_access_key=args.aws_secret_key)
+
+instances = conn.get_all_dbinstances()
+
+running_instances = {}
+for i in instances:
+    if i.status == 'available':
+        if i.availability_zone.startswith(args.region):
+            a_zone = args.region
+        running_instances[(i.instance_class, a_zone)] = running_instances.get((i.instance_class, a_zone), 0 ) + 1
+
+reserved_instances = {}
+soon_expire_ri = {}
+get_all_reserved_rds_instances = sh.Command('/opt/aws/apitools/rds/bin/rds-describe-reserved-db-instances')
+raw_ri_list = get_all_reserved_rds_instances('--aws-credential-file=/etc/aws.cfg',
+                                             '--region', args.region,
+                                             '--delimiter', '|', '--show-long').stdout.splitlines()
+for ri in raw_ri_list:
+    if not ri.startswith('RESERVATION'):
+        continue
+    if ri.split('|')[10] != 'active':    # state
+        continue
+    ri_id = ri.split('|')[2]
+    ri_type = ri.split('|')[3]
+    ri_count = int(ri.split('|')[9])
+    reserved_instances[(ri_type, args.region)] = reserved_instances.get((ri_type, args.region), 0) + ri_count
+    ri_start_time = ri.split('|')[5]
+    ri_duration = int(ri.split('|')[6][:-1]) * 31536000
+    expire_time = time.mktime(datetime.datetime.strptime(ri_start_time, "%Y-%m-%dT%H:%M:%S.%fZ").timetuple()) + ri_duration
+    if (expire_time - time.time()) < args.warn_time * 86400:
+        soon_expire_ri[ri_id] = (ri_type, args.region, expire_time)
+
+diff = dict([(x, reserved_instances[x] - running_instances.get(x, 0)) for x in reserved_instances])
+
+for pkey in running_instances:
+    if pkey not in reserved_instances:
+        diff[pkey] = -running_instances[pkey]
+
+unused_ri = dict((k, v) for k, v in diff.iteritems() if v > 0)
+
+unreserved_instances = dict((k,-v) for k, v in diff.iteritems() if v < 0)
+
+# Report
+print("Unused reserved instances:")
+for k, v in unused_ri.iteritems():
+    print("\t(%s)\t%s\t%s" %(v, k[0], k[1]))
+if not unused_ri:
+    print("\tNone")
+print("")
+
+print("Expiring soon (less than %sd) reserved instances:" % args.warn_time)
+for k, v in soon_expire_ri.iteritems():
+    print("\t%s\t%s\t%s\t%s" %(k, v[0], v[1], datetime.datetime.fromtimestamp(v[2]).strftime('%Y-%m-%d')))
+if not soon_expire_ri:
+    print("\tNone")
+print("")
+
+print("On-demand instances, which haven't got a reserved instance:")
+for k, v in unreserved_instances.iteritems():
+    print("\t(%s)\t%s\t%s" %(v, k[0], k[1]))
+if not unreserved_instances:
+    print("\tNone")
+print("")
+
+print("Running on-demand instances:   %s" % sum(running_instances.values()))
+print("Reserved instances:            %s" % sum(reserved_instances.values()))
+print("")
