@@ -46,21 +46,21 @@ unreserved_instances = dict((k,-v) for k, v in diff.iteritems() if v < 0)
 
 # Report
 print("Unused reserved instances:")
-for k, v in unused_ri.iteritems():
+for k, v in sorted(unused_ri.iteritems()):
     print("\t(%s)\t%s\t%s" %(v, k[0], k[1]))
 if not unused_ri:
     print("\tNone")
 print("")
 
 print("Expiring soon (less than %sd) reserved instances:" % args.warn_time)
-for k, v in soon_expire_ri.iteritems():
+for k, v in sorted(soon_expire_ri.iteritems()):
     print("\t%s\t%s\t%s\t%s" %(k, v[0], v[1], datetime.datetime.fromtimestamp(v[2]).strftime('%Y-%m-%d')))
 if not soon_expire_ri:
     print("\tNone")
 print("")
 
-print("On-demand instances, which haven't got a reserved instance:")
-for k, v in unreserved_instances.iteritems():
+print("On-demand instances, which do not have a reserved instance:")
+for k, v in sorted(unreserved_instances.iteritems()):
     print("\t(%s)\t%s\t%s" %(v, k[0], k[1]))
 if not unreserved_instances:
     print("\tNone")
