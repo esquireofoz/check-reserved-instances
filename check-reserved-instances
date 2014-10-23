@@ -11,7 +11,7 @@ from boto import ec2
 parser = optparse.OptionParser(description="Shows summary about 'Reserved' and 'On-demand' ec2 instances")
 parser.add_option("--aws-access-key", type=str, default=None, help="AWS Access Key ID. Defaults to the value of the AWS_ACCESS_KEY_ID environment variable (if set)")
 parser.add_option("--aws-secret-key", type=str, default=None, help="AWS Secret Access Key. Defaults to the value of the AWS_SECRET_ACCESS_KEY environment variable (if set)")
-parser.add_option("--region", type=str, default="us-west-1", help="AWS Region name. Default is 'us-west-1'")
+parser.add_option("--region", type=str, default="us-east-1", help="AWS Region name. Default is 'us-east-1'")
 parser.add_option("-w", "--warn-time", type=int, default=30, help="Expire period for reserved instances in days. Default is '30 days'")
 args, _ = parser.parse_args()
 
